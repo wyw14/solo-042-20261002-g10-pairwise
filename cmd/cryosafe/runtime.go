@@ -11,6 +11,7 @@ import (
 	"github.com/wyw14/cry-98/internal/alarm"
 	"github.com/wyw14/cry-98/internal/api"
 	"github.com/wyw14/cry-98/internal/circuit"
+	"github.com/wyw14/cry-98/internal/detection"
 	"github.com/wyw14/cry-98/internal/fill"
 	"github.com/wyw14/cry-98/internal/journal"
 	"github.com/wyw14/cry-98/internal/model"
@@ -29,6 +30,7 @@ type runtime struct {
 	retryQueue   *notify.RetryQueue
 	dispatcher   *notify.Dispatcher
 	alarmService *alarm.Service
+	detector     *detection.Detector
 }
 
 func buildRuntime(cfg config, now func() time.Time) (*runtime, error) {
@@ -193,6 +195,23 @@ func buildRuntime(cfg config, now func() time.Time) (*runtime, error) {
 	suppressions := alarm.NewSuppressionService(store, now)
 	healthService := monitor.NewHealthService(ingestor, circuitHealth, probeMonitor, now)
 
+	anomalyDetector, err := detection.NewDetector(detection.Config{
+		Window:             cfg.Detection.Window,
+		MinDuration:        cfg.Detection.MinDuration,
+		MinSamples:         cfg.Detection.MinSamples,
+		MaxSampleAge:       cfg.Detection.MaxSampleAge,
+		PressureLimitKPa:   cfg.Detection.PressureLimitKPa,
+		LeakLevelDropMM:    cfg.Detection.LeakLevelDropMM,
+		LeakPressureKPa:    cfg.Detection.LeakPressureKPa,
+		MaxEvidenceSamples: 20,
+	}, alarmService, now)
+	if err != nil {
+		return nil, err
+	}
+	if err := ingestor.AddObserver(anomalyDetector.Observe); err != nil {
+		return nil, err
+	}
+
 	apiServer := api.NewServer(api.Dependencies{
 		Vessels:        vesselRegistry,
 		Fills:          fillService,
@@ -213,7 +232,13 @@ func buildRuntime(cfg config, now func() time.Time) (*runtime, error) {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	return &runtime{server: server, retryQueue: retryQueue, dispatcher: dispatcher, alarmService: alarmService}, nil
+	return &runtime{
+		server:       server,
+		retryQueue:   retryQueue,
+		dispatcher:   dispatcher,
+		alarmService: alarmService,
+		detector:     anomalyDetector,
+	}, nil
 }
 
 func (r *runtime) run(ctx context.Context) error {
@@ -235,6 +260,7 @@ func (r *runtime) run(ctx context.Context) error {
 			}
 			return err
 		case <-ticker.C:
+			r.detector.Sweep(ctx)
 			_ = r.retryQueue.RunDue(ctx, r.dispatcher)
 			if pending := len(r.retryQueue.Pending()); pending > 0 {
 				slog.Warn("alarm notifications awaiting retry", "count", pending)

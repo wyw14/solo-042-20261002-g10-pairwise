@@ -35,16 +35,36 @@ type ChannelResult struct {
 	Attempted time.Time `json:"attempted_at"`
 }
 
+// EvidenceSample is a sensor sample attached to an alarm to justify why it
+// was raised. Values come straight from the detection window so operators can
+// see the duration and magnitude of the condition.
+type EvidenceSample struct {
+	ProbeID    string    `json:"probe_id"`
+	Kind       ProbeKind `json:"kind"`
+	Value      float64   `json:"value"`
+	ObservedAt time.Time `json:"observed_at"`
+}
+
+func NewEvidenceSample(sample Sample) EvidenceSample {
+	return EvidenceSample{
+		ProbeID:    sample.ProbeID,
+		Kind:       sample.Kind,
+		Value:      sample.Value,
+		ObservedAt: sample.ObservedAt.UTC(),
+	}
+}
+
 type Alarm struct {
-	ID              uuid.UUID       `json:"id"`
-	VesselID        string          `json:"vessel_id"`
-	Kind            AlarmKind       `json:"kind"`
-	State           AlarmState      `json:"state"`
-	Message         string          `json:"message"`
-	Channels        []ChannelResult `json:"channels"`
-	SuppressedUntil time.Time       `json:"suppressed_until,omitempty"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
+	ID              uuid.UUID        `json:"id"`
+	VesselID        string           `json:"vessel_id"`
+	Kind            AlarmKind        `json:"kind"`
+	State           AlarmState       `json:"state"`
+	Message         string           `json:"message"`
+	Evidence        []EvidenceSample `json:"evidence,omitempty"`
+	Channels        []ChannelResult  `json:"channels"`
+	SuppressedUntil time.Time        `json:"suppressed_until,omitempty"`
+	CreatedAt       time.Time        `json:"created_at"`
+	UpdatedAt       time.Time        `json:"updated_at"`
 }
 
 func NewAlarm(vesselID string, kind AlarmKind, message string, now time.Time) (Alarm, error) {
@@ -65,6 +85,11 @@ func NewAlarm(vesselID string, kind AlarmKind, message string, now time.Time) (A
 		CreatedAt: now.UTC(),
 		UpdatedAt: now.UTC(),
 	}, nil
+}
+
+func (a Alarm) WithEvidence(evidence []EvidenceSample) Alarm {
+	a.Evidence = append([]EvidenceSample(nil), evidence...)
+	return a
 }
 
 func (a Alarm) WithChannels(results []ChannelResult, now time.Time) Alarm {

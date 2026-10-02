@@ -26,15 +26,27 @@ func NewService(delivery *DeliveryService, now func() time.Time) *Service {
 }
 
 func (s *Service) Raise(ctx context.Context, vesselID string, kind model.AlarmKind, message string) (model.Alarm, error) {
+	return s.RaiseWithEvidence(ctx, vesselID, kind, message, nil)
+}
+
+func (s *Service) RaiseWithEvidence(ctx context.Context, vesselID string, kind model.AlarmKind, message string, evidence []model.EvidenceSample) (model.Alarm, error) {
 	alarm, err := model.NewAlarm(vesselID, kind, message, s.now())
 	if err != nil {
 		return model.Alarm{}, err
+	}
+	if len(evidence) > 0 {
+		alarm = alarm.WithEvidence(evidence)
 	}
 	s.mu.Lock()
 	s.alarms[alarm.ID] = alarm
 	s.mu.Unlock()
 	delivered, err := s.delivery.Deliver(ctx, alarm)
 	s.mu.Lock()
+	if delivered.ID != alarm.ID {
+		// Delivery failed before producing a journaled alarm; keep the
+		// detected alarm so it remains visible and retryable.
+		delivered = alarm
+	}
 	s.alarms[alarm.ID] = delivered
 	s.mu.Unlock()
 	return delivered, err
