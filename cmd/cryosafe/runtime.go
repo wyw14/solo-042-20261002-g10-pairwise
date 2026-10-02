@@ -11,6 +11,7 @@ import (
 	"github.com/wyw14/cry-98/internal/alarm"
 	"github.com/wyw14/cry-98/internal/api"
 	"github.com/wyw14/cry-98/internal/circuit"
+	"github.com/wyw14/cry-98/internal/detect"
 	"github.com/wyw14/cry-98/internal/fill"
 	"github.com/wyw14/cry-98/internal/journal"
 	"github.com/wyw14/cry-98/internal/model"
@@ -29,6 +30,7 @@ type runtime struct {
 	retryQueue   *notify.RetryQueue
 	dispatcher   *notify.Dispatcher
 	alarmService *alarm.Service
+	detector     *detect.Detector
 }
 
 func buildRuntime(cfg config, now func() time.Time) (*runtime, error) {
@@ -190,6 +192,13 @@ func buildRuntime(cfg config, now func() time.Time) (*runtime, error) {
 	if err := alarm.NewRecovery(store, alarmService).Restore(); err != nil {
 		return nil, err
 	}
+	detector, err := detect.NewDetector(cfg.Detect, probeRegistry, alarmService, now)
+	if err != nil {
+		return nil, err
+	}
+	if err := ingestor.AddObserver(detector.Observe); err != nil {
+		return nil, err
+	}
 	suppressions := alarm.NewSuppressionService(store, now)
 	healthService := monitor.NewHealthService(ingestor, circuitHealth, probeMonitor, now)
 
@@ -213,7 +222,7 @@ func buildRuntime(cfg config, now func() time.Time) (*runtime, error) {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	return &runtime{server: server, retryQueue: retryQueue, dispatcher: dispatcher, alarmService: alarmService}, nil
+	return &runtime{server: server, retryQueue: retryQueue, dispatcher: dispatcher, alarmService: alarmService, detector: detector}, nil
 }
 
 func (r *runtime) run(ctx context.Context) error {
@@ -235,6 +244,7 @@ func (r *runtime) run(ctx context.Context) error {
 			}
 			return err
 		case <-ticker.C:
+			r.detector.Sweep(ctx)
 			_ = r.retryQueue.RunDue(ctx, r.dispatcher)
 			if pending := len(r.retryQueue.Pending()); pending > 0 {
 				slog.Warn("alarm notifications awaiting retry", "count", pending)

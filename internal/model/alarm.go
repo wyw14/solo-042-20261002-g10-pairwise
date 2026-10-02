@@ -35,16 +35,39 @@ type ChannelResult struct {
 	Attempted time.Time `json:"attempted_at"`
 }
 
+// EvidenceSample is a sensor reading attached to an alarm by the detection
+// module so responders can see the samples that justify the alarm.
+type EvidenceSample struct {
+	ProbeID    string    `json:"probe_id"`
+	Kind       ProbeKind `json:"kind"`
+	Value      float64   `json:"value"`
+	ObservedAt time.Time `json:"observed_at"`
+}
+
+func EvidenceFromSamples(samples []Sample) []EvidenceSample {
+	evidence := make([]EvidenceSample, 0, len(samples))
+	for _, sample := range samples {
+		evidence = append(evidence, EvidenceSample{
+			ProbeID:    sample.ProbeID,
+			Kind:       sample.Kind,
+			Value:      sample.Value,
+			ObservedAt: sample.ObservedAt,
+		})
+	}
+	return evidence
+}
+
 type Alarm struct {
-	ID              uuid.UUID       `json:"id"`
-	VesselID        string          `json:"vessel_id"`
-	Kind            AlarmKind       `json:"kind"`
-	State           AlarmState      `json:"state"`
-	Message         string          `json:"message"`
-	Channels        []ChannelResult `json:"channels"`
-	SuppressedUntil time.Time       `json:"suppressed_until,omitempty"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
+	ID              uuid.UUID        `json:"id"`
+	VesselID        string           `json:"vessel_id"`
+	Kind            AlarmKind        `json:"kind"`
+	State           AlarmState       `json:"state"`
+	Message         string           `json:"message"`
+	Channels        []ChannelResult  `json:"channels"`
+	Evidence        []EvidenceSample `json:"evidence,omitempty"`
+	SuppressedUntil time.Time        `json:"suppressed_until,omitempty"`
+	CreatedAt       time.Time        `json:"created_at"`
+	UpdatedAt       time.Time        `json:"updated_at"`
 }
 
 func NewAlarm(vesselID string, kind AlarmKind, message string, now time.Time) (Alarm, error) {
@@ -65,6 +88,11 @@ func NewAlarm(vesselID string, kind AlarmKind, message string, now time.Time) (A
 		CreatedAt: now.UTC(),
 		UpdatedAt: now.UTC(),
 	}, nil
+}
+
+func (a Alarm) WithEvidence(evidence []EvidenceSample) Alarm {
+	a.Evidence = append([]EvidenceSample(nil), evidence...)
+	return a
 }
 
 func (a Alarm) WithChannels(results []ChannelResult, now time.Time) Alarm {
